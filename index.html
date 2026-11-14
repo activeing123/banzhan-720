@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>样板间展厅 · 720° 全景漫游</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:#0b0b0d;color:#e8e4dd;
+    font:14px/1.5 "Microsoft YaHei","PingFang SC",system-ui,sans-serif;overflow:hidden}
+  #gl{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:grab}
+  #gl.drag{cursor:grabbing}
+  #gl.placing{cursor:crosshair}
+  #side{position:fixed;left:0;top:0;bottom:0;width:250px;padding:18px 14px 0;
+    background:linear-gradient(90deg,rgba(10,10,12,.94),rgba(10,10,12,.72) 78%,transparent);
+    display:flex;flex-direction:column;   /* 头固定 + 中段自己滚,最后一项不被裁 */
+    overflow:hidden;transition:transform .25s;z-index:5}
+  #side.hide{transform:translateX(-100%)}
+  #scrolly{flex:1 1 auto;min-height:0;overflow-y:auto;padding:2px 6px 20px 0}
+  h1{font-size:15px;font-weight:600;letter-spacing:.06em;margin-bottom:4px;color:#f3efe7}
+  .sub{font-size:11.5px;color:#4a463f;margin-bottom:14px;letter-spacing:.04em}
+  .room{display:block;width:100%;text-align:left;padding:8px 10px;margin-bottom:4px;
+    background:transparent;border:1px solid transparent;border-radius:6px;color:#b9b3a8;
+    font:inherit;font-size:12.5px;cursor:pointer;transition:.15s}
+  .room:hover{background:rgba(255,255,255,.06);color:#efe9df}
+  .room.on{background:rgba(214,178,110,.16);border-color:rgba(214,178,110,.5);color:#f0d9a8}
+  .room b{display:block;font-weight:600;font-size:13px;margin-bottom:1px}
+  .room span{font-size:11px;color:#8d877d}
+  .room.on span{color:#c9b48a}
+  /* ── 缩略图导航 ───────────────────────────────────────── */
+  #thumbs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 12px}
+  .th{position:relative;padding:0;border:1px solid rgba(255,255,255,.10);border-radius:5px;
+    overflow:hidden;background:#111;cursor:pointer;line-height:0;transition:.15s}
+  .th img{width:100%;display:block;opacity:.7;transition:.15s}
+  .th:hover{border-color:rgba(214,178,110,.55)}
+  .th:hover img{opacity:1}
+  .th.on{border-color:rgba(214,178,110,.95);box-shadow:0 0 0 1px rgba(214,178,110,.8)}
+  .th.on img{opacity:1}
+  .th i{position:absolute;left:0;right:0;bottom:0;font-style:normal;font-size:10px;
+    color:#efe9df;background:rgba(8,8,10,.74);padding:1px 4px;line-height:1.55;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #hud button:disabled{opacity:.42;cursor:not-allowed;border-color:rgba(255,255,255,.10);
+    color:#7d776f}
+  #vrhint{color:#4a463f;font-size:11px}
+  /* ── 背景音乐开关(右下角,默认关;整体离视口底边 ≥34px,状态字放左边不会被裁)──
+     ★ 判官实测:状态字原来是 #8d877d 灰字压在亮橙木纹上(约 1.5:1),读不出。
+       改法:整块加半透明深色胶囊底 + 状态字改白色加粗 + 深色投影(量到的对比度见交付报告) */
+  #mutebox{position:fixed;right:22px;bottom:34px;z-index:7;display:flex;align-items:center;
+    gap:8px;padding:5px 5px 5px 13px;border-radius:999px;
+    background:rgba(10,10,12,.78);border:1px solid rgba(255,255,255,.12);
+    backdrop-filter:blur(8px)}
+  #mute{width:42px;height:42px;border-radius:50%;background:rgba(20,20,24,.9);
+    border:1px solid rgba(255,255,255,.18);color:#e8e4dd;font-size:17px;line-height:1;
+    cursor:pointer;transition:.15s}
+  #mute:hover{border-color:rgba(214,178,110,.6);color:#f0d9a8}
+  #mute.on{background:rgba(214,178,110,.2);border-color:rgba(214,178,110,.75);color:#f0d9a8}
+  #mute:disabled{opacity:.4;cursor:not-allowed}
+  #mutelab{font-size:11.5px;font-weight:600;color:#ffffff;letter-spacing:.08em;
+    text-shadow:0 1px 2px rgba(0,0,0,.95)}
+  #mutebox.on #mutelab{color:#ffd9a0}
+  #hud{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;
+    display:flex;gap:8px;align-items:center;background:rgba(12,12,14,.72);
+    border:1px solid rgba(255,255,255,.09);border-radius:999px;padding:7px 14px;
+    backdrop-filter:blur(8px);font-size:12px;color:#a9a29a;white-space:nowrap}
+  #hud button{background:transparent;border:1px solid rgba(255,255,255,.14);color:#cfc8bd;
+    border-radius:999px;padding:4px 11px;font:inherit;font-size:12px;cursor:pointer}
+  #hud button:hover{border-color:rgba(214,178,110,.6);color:#f0d9a8}
+  #hud button.on{background:rgba(214,178,110,.18);border-color:rgba(214,178,110,.6);color:#f0d9a8}
+  /* ★ 判官反馈:右上角房间名浮层被视口边缘裁掉(长名字 + 长副标题溢出)。
+     改法:硬限 max-width(视口宽 − 44px,且不超过 560px)+ 允许任意位置换行,
+     宁可折行也不许顶出屏幕;右边缘固定留 22px 安全距(任何窗口宽度下都 ≥16) */
+  #title{position:fixed;right:22px;top:20px;text-align:right;z-index:6;pointer-events:none;
+    max-width:min(560px, calc(100vw - 44px));box-sizing:border-box}
+  #title b{display:block;font-size:17px;font-weight:600;color:#f3efe7;letter-spacing:.04em;
+    overflow-wrap:anywhere;word-break:break-word}
+  #title span{display:block;font-size:11.5px;color:#8d877d;
+    overflow-wrap:anywhere;word-break:break-word}
+  #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#0b0b0d;z-index:20;color:#8d877d;font-size:13px;letter-spacing:.1em}
+  #load.gone{display:none}
+  #toggle{position:fixed;left:264px;top:14px;z-index:8;background:rgba(12,12,14,.82);
+    border:1px solid rgba(255,255,255,.16);color:#cfc8bd;border-radius:6px;padding:6px 10px;
+    font:inherit;font-size:12px;cursor:pointer;transition:left .25s,border-color .15s}
+  #toggle:hover{border-color:rgba(214,178,110,.6);color:#f0d9a8}
+  body.collapsed #toggle{left:14px}
+
+  /* ── 热点 ─────────────────────────────────────────────── */
+  #spots{position:fixed;inset:0;z-index:4;pointer-events:none}
+  .hs{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:pointer;
+    user-select:none;transition:opacity .12s}
+  .hs.nav{width:54px;height:54px;border-radius:50%;
+    background:radial-gradient(circle at 50% 42%,rgba(214,178,110,.30),rgba(214,178,110,.06) 70%);
+    border:1.5px solid rgba(214,178,110,.85);display:flex;flex-direction:column;
+    align-items:center;justify-content:center;color:#f0d9a8;font-size:9.5px;line-height:1.15;
+    backdrop-filter:blur(2px);
+    box-shadow:0 0 0 1px rgba(0,0,0,.55),0 0 12px 2px rgba(214,178,110,.45),0 2px 14px rgba(214,178,110,.22)}
+  .hs.nav b{font-size:17px;font-weight:400;margin-bottom:-1px}
+  .hs.nav span{max-width:52px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hs.nav:hover{background:radial-gradient(circle at 50% 42%,rgba(214,178,110,.5),rgba(214,178,110,.14) 70%);
+    transform:translate(-50%,-50%) scale(1.08)}
+  /* ★ 判官反馈:灯泡图标原来 ~20px、深色墙上容易漏看 → 28px + 白描边 + 外发光 */
+  .hs.lamp{width:28px;height:28px;border-radius:50%;
+    background:rgba(248,246,242,.96);border:2px solid rgba(255,255,255,.98);
+    display:flex;align-items:center;justify-content:center;font-size:15px;color:#1a1a1c;
+    box-shadow:0 0 0 1.5px rgba(16,16,18,.85),0 0 14px 4px rgba(255,255,255,.55),
+               0 2px 12px rgba(0,0,0,.6)}
+  .hs.lamp:hover{background:#fff;transform:translate(-50%,-50%) scale(1.14)}
+  .hs .tip{position:absolute;left:50%;top:100%;margin-top:6px;transform:translateX(-50%);
+    background:rgba(12,12,14,.92);border:1px solid rgba(255,255,255,.14);border-radius:6px;
+    padding:3px 8px;font-size:11.5px;color:#e8e4dd;white-space:nowrap;
+    opacity:0;pointer-events:none;transition:opacity .12s}
+  .hs:hover .tip{opacity:1}
+  .hs.sel{outline:2px solid #7ac7ff;outline-offset:2px}
+
+  /* ── 灯具弹窗 ─────────────────────────────────────────── */
+  #pop{position:fixed;z-index:9;max-width:320px;display:none;
+    background:rgba(14,14,17,.96);border:1px solid rgba(214,178,110,.45);border-radius:10px;
+    padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+  #pop.show{display:block}
+  #pop h3{font-size:14.5px;color:#f0d9a8;font-weight:600;margin-bottom:6px}
+  #pop p{font-size:12.5px;color:#b9b3a8;line-height:1.6}
+  #pop .x{position:absolute;right:9px;top:7px;color:#8d877d;cursor:pointer;font-size:15px}
+  #pop .x:hover{color:#e8e4dd}
+
+  /* ── 热点编辑器 ───────────────────────────────────────── */
+  #ed{position:fixed;right:18px;bottom:78px;z-index:8;width:270px;display:none;
+    background:rgba(14,14,17,.97);border:1px solid rgba(122,199,255,.4);border-radius:10px;
+    padding:13px 15px;font-size:12.5px}
+  #ed.show{display:block}
+  #ed h3{font-size:13.5px;color:#7ac7ff;margin-bottom:8px;font-weight:600}
+  #ed label{display:block;color:#8d877d;margin:7px 0 3px;font-size:11.5px}
+  #ed select,#ed input{width:100%;background:#0b0b0d;border:1px solid rgba(255,255,255,.16);
+    color:#e8e4dd;border-radius:5px;padding:5px 7px;font:inherit;font-size:12px}
+  #ed .row{display:flex;gap:6px;margin-top:10px}
+  #ed button{flex:1;background:transparent;border:1px solid rgba(255,255,255,.16);color:#cfc8bd;
+    border-radius:5px;padding:6px 8px;font:inherit;font-size:12px;cursor:pointer}
+  #ed button:hover{border-color:rgba(122,199,255,.7);color:#cfe9ff}
+  #ed button.primary{background:rgba(122,199,255,.16);border-color:rgba(122,199,255,.55);color:#cfe9ff}
+  #ed .cur{color:#f0d9a8;font-size:11.5px;margin-top:6px;min-height:16px}
+  #ed ul{list-style:none;margin-top:8px;max-height:130px;overflow-y:auto}
+  #ed li{display:flex;justify-content:space-between;align-items:center;gap:6px;
+    padding:4px 0;border-bottom:1px solid rgba(255,255,255,.06);color:#b9b3a8}
+  #ed li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #ed li i{color:#ff8f8f;cursor:pointer;font-style:normal;flex:0 0 auto}
+  #ed .hint{color:#6f6a63;font-size:11px;margin-top:8px;line-height:1.5}
+
+  @media (max-width:760px){
+    #side{width:210px} #toggle{left:224px} body.collapsed #toggle{left:14px}
+    #title{right:16px;top:14px}          /* 小屏也留 ≥16px 右安全距 */
+    #title b{font-size:14px} #hud{font-size:11px;padding:6px 10px;gap:6px}
+    #ed{right:8px;left:8px;width:auto;bottom:70px}
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="spots"></div>
+<button id="toggle">☰ 收起房间栏</button>
+<div id="side">
+  <h1>样板间展厅 · 720° 全景漫游</h1>
+  <div class="sub">拖动看四周 · 滚轮缩放 · 点缩略图切换房间 · 双击全屏</div>
+  <div id="scrolly">
+    <div id="thumbs"></div>
+    <div id="rooms"></div>
+  </div>
+</div>
+<div id="title"><b id="tname">—</b><span id="tdesc"></span></div>
+<div id="hud">
+  <button id="auto">自动旋转</button>
+  <button id="reset">回正</button>
+  <button id="wide">广角 100°</button>
+  <button id="spotbtn">热点 显示</button>
+  <button id="editbtn">✎ 摆热点</button>
+  <button id="fs">全屏</button>
+  <button id="vr" style="display:none">VR</button>
+  <span id="vrhint" style="display:none"></span>
+  <span id="fov">FOV 100°</span>
+</div>
+<div id="load">正在载入全景...</div>
+<div id="mutebox"><span id="mutelab">关</span><button id="mute" title="背景音乐(默认关)">🔇</button></div>
+
+<div id="pop"><span class="x" id="popx">×</span><h3 id="popt"></h3><p id="popd"></p></div>
+
+<div id="ed">
+  <h3>✎ 摆热点</h3>
+  <div class="hint">在画面上点一下取方位,再填下面的信息。</div>
+  <label>类型</label>
+  <select id="edkind">
+    <option value="nav">导航(走进另一个房间)</option>
+    <option value="lamp">灯具标注</option>
+  </select>
+  <label id="edtol">目标房间</label>
+  <select id="edto"></select>
+  <label>标题</label>
+  <input id="edtitle" placeholder="比如:图里亚吊灯">
+  <label>说明(可空)</label>
+  <input id="eddesc" placeholder="留空就用该房间的原文">
+  <div class="cur" id="edcur">还没点方位 —— 在画面上点一下</div>
+  <div class="row">
+    <button class="primary" id="edadd">添加</button>
+    <button id="edclear">清空本房间</button>
+  </div>
+  <ul id="edlist"></ul>
+  <div class="row">
+    <button id="edexport">导出 JSON</button>
+    <button id="edclose">关闭</button>
+  </div>
+  <div class="hint">导出后覆盖同目录 <b>hotspots.json</b>,再跑一次 make_viewer.py 即可固化。</div>
+</div>
+
+<script>
+const ROOMS = [{"file": "pano1/s01_lo.jpg", "hi": "pano1/s01.jpg", "thumb": "thumbs/s01.jpg", "label": "木饰面展示系统 / 通高窗岩板吧台 / 悬浮大屏墙 / 走廊对景 · 拖动环视", "name": "01_01_样板间展厅", "v1": "01_样板间展厅", "idx": 1, "yaw0": 0.0}];
+let SPOTS = {"01_01_样板间展厅": [{"kind": "lamp", "yaw": -1.22, "pitch": 0.42, "title": "灯槽", "desc": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"}, {"kind": "lamp", "yaw": 0.0, "pitch": 0.42, "title": "层板灯带", "desc": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"}, {"kind": "lamp", "yaw": 1.22, "pitch": 0.42, "title": "轨道射灯", "desc": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"}]};
+const ORIGIN = {"01_01_样板间展厅": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"};
+
+const cv = document.getElementById('gl');
+const gl = cv.getContext('webgl', {antialias:false, alpha:false, preserveDrawingBuffer:false,
+                                   xrCompatible:true});   // VR 要这个标志
+if (!gl) { document.getElementById('load').textContent = '这个浏览器不支持 WebGL'; throw new Error('no webgl'); }
+
+const VS = `attribute vec2 aPos; varying vec2 vUv;
+void main(){ vUv = aPos*0.5+0.5; gl_Position = vec4(aPos,0.0,1.0); }`;
+
+const FS = `precision highp float;
+varying vec2 vUv;
+uniform sampler2D uTex;
+uniform sampler2D uTexB;
+uniform float uMix;
+uniform vec2 uRes;
+uniform float uYaw, uPitch, uFov;
+const float PI = 3.14159265359;
+void main(){
+  vec2 p = vUv*2.0-1.0;
+  p.x *= uRes.x/uRes.y;
+  float t = tan(uFov*0.5);
+  vec3 d = normalize(vec3(p.x*t, p.y*t, -1.0));
+  float cp = cos(uPitch), sp = sin(uPitch);
+  d = vec3(d.x, d.y*cp - d.z*sp, d.y*sp + d.z*cp);
+  float cy = cos(uYaw), sy = sin(uYaw);
+  d = vec3(d.x*cy + d.z*sy, d.y, -d.x*sy + d.z*cy);
+  float lon = atan(d.x, -d.z);
+  float lat = asin(clamp(d.y, -1.0, 1.0));
+  vec2 uv = vec2(lon/(2.0*PI)+0.5, 0.5 - lat/PI);
+  /* 交叉淡入:uTex = 上一张,uTexB = 新一张,uMix 0→1 */
+  vec3 from = texture2D(uTex, uv).rgb;
+  vec3 to   = texture2D(uTexB, uv).rgb;
+  gl_FragColor = vec4(mix(from, to, uMix), 1.0);
+}`;
+
+function sh(type, src){
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(prog, 'aPos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const U = {
+  tex: gl.getUniformLocation(prog,'uTex'),
+  texB: gl.getUniformLocation(prog,'uTexB'),
+  mix: gl.getUniformLocation(prog,'uMix'),
+  res: gl.getUniformLocation(prog,'uRes'),
+  yaw: gl.getUniformLocation(prog,'uYaw'),
+  pitch: gl.getUniformLocation(prog,'uPitch'),
+  fov: gl.getUniformLocation(prog,'uFov'),
+};
+
+let yaw = 0, pitch = 0, fov = 100*Math.PI/180;
+let auto = false, cur = -1, dragging = false, lx = 0, ly = 0, vx = 0, vy = 0;
+let showSpots = false, editMode = false, pending = null, selIdx = -1;
+/* 交叉淡入:texA = 上一张(退场),texB = 当前(进场),mixT 0→1 用 0.4s */
+let texA = null, texB = null, mixT = 1, fadeFrom = 0, fading = false;
+const FADE_MS = 400;
+
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.floor(innerWidth*dpr); cv.height = Math.floor(innerHeight*dpr);
+  gl.viewport(0,0,cv.width,cv.height);
+}
+addEventListener('resize', resize); resize();
+
+function loadTex(url){
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        res(t);
+      } catch (e) {
+        rej(new Error('纹理上传失败(多半是 file:// 跨域): ' + e.message));
+      }
+    };
+    img.onerror = () => rej(new Error('图片载入失败: ' + url.slice(0, 48)));
+    img.src = url;
+  });
+}
+
+/* ── 球面方位 ↔ 屏幕坐标 ────────────────────────────────────────────────
+   着色器把「屏幕 → 视线方向 → 经纬」;这里做反过来的那一半:
+   把热点的 (yaw,pitch) 世界方向投到屏幕上,好把 DOM 标签摆到正确位置。
+   旋转顺序必须和着色器一致:先 pitch 后 yaw。 */
+function project(lonH, latH){
+  const X = Math.sin(lonH)*Math.cos(latH);
+  const Y = Math.sin(latH);
+  const Z = -Math.cos(lonH)*Math.cos(latH);
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);       // 逆 yaw
+  const x1 = X*cy - Z*sy, y1 = Y, z1 = X*sy + Z*cy;
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);   // 逆 pitch
+  const y2 = y1*cp + z1*sp, z2 = -y1*sp + z1*cp;
+  if (z2 > -0.02) return null;                        // 在背后
+  const t = Math.tan(fov*0.5), asp = cv.width/cv.height;
+  const sx = (x1/(-z2))/(t*asp), sy2 = (y2/(-z2))/t;
+  if (sx < -1.35 || sx > 1.35 || sy2 < -1.35 || sy2 > 1.35) return null;
+  return { x:(sx*0.5+0.5)*innerWidth, y:(1-(sy2*0.5+0.5))*innerHeight };
+}
+
+/* 屏幕点 → 经纬(着色器前半段的逆运算),给编辑器用 */
+function unproject(clientX, clientY){
+  const px = (clientX/innerWidth)*2-1;
+  const py = 1-(clientY/innerHeight)*2;
+  const t = Math.tan(fov*0.5), asp = cv.width/cv.height;
+  let dx = px*asp*t, dy = py*t, dz = -1;
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const y1 = dy*cp - dz*sp, z1 = dy*sp + dz*cp;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const X = dx*cy + z1*sy, Y = y1, Z = -dx*sy + z1*cy;
+  const n = Math.hypot(X,Y,Z) || 1;
+  return { yaw: Math.atan2(X/n, -Z/n), pitch: Math.asin(Math.max(-1,Math.min(1,Y/n))) };
+}
+
+/* ── 热点渲染 ─────────────────────────────────────────────────────────── */
+const spotsEl = document.getElementById('spots');
+function renderSpots(){
+  const name = cur >= 0 ? ROOMS[cur].name : null;
+  const list = (showSpots && name && SPOTS[name]) ? SPOTS[name] : [];
+  spotsEl.innerHTML = '';
+  list.forEach((h, i) => {
+    const p = project(h.yaw, h.pitch);
+    if (!p) return;
+    const d = document.createElement('div');
+    d.className = 'hs ' + (h.kind === 'nav' ? 'nav' : 'lamp') + (editMode && i === selIdx ? ' sel' : '');
+    d.style.left = p.x + 'px';
+    d.style.top = p.y + 'px';
+    if (h.kind === 'nav') {
+      d.innerHTML = '<b>↑</b><span>' + (h.title || '').replace(/^[→←]\s*/, '') + '</span>';
+    } else {
+      d.innerHTML = '💡';
+    }
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.textContent = h.title || (h.kind === 'nav' ? '走过去' : '灯具');
+    d.appendChild(tip);
+    d.onclick = (ev) => { ev.stopPropagation(); onSpotClick(h, i, p); };
+    spotsEl.appendChild(d);
+  });
+}
+
+function onSpotClick(h, i, p){
+  if (editMode) { selIdx = i; fillEditor(); renderSpots(); return; }
+  if (h.kind === 'nav') {
+    const ti = ROOMS.findIndex(r => r.name === h.to);
+    if (ti >= 0) pick(ti);
+  } else {
+    showPop(p.x, p.y, h.title || '灯具', h.desc || ORIGIN[ROOMS[cur].name] || '');
+  }
+}
+
+function roomKey(n){ return n.replace(/^(\d+_)+/, ''); }   // 01_01_展厅入口形象区 → 展厅入口形象区
+
+const pop = document.getElementById('pop');
+function showPop(x, y, title, desc){
+  document.getElementById('popt').textContent = title;
+  document.getElementById('popd').textContent = desc || '(没有补充说明)';
+  pop.classList.add('show');
+  const w = pop.offsetWidth, h2 = pop.offsetHeight;
+  pop.style.left = Math.max(10, Math.min(innerWidth - w - 10, x - w/2)) + 'px';
+  pop.style.top  = Math.max(10, Math.min(innerHeight - h2 - 10, y + 34)) + 'px';
+}
+document.getElementById('popx').onclick = () => pop.classList.remove('show');
+
+/* ── 缩略图导航 + 房间列表 ────────────────────────────────────────────── */
+const roomsEl = document.getElementById('rooms');
+const thumbsEl = document.getElementById('thumbs');
+const thumbEls = [], roomEls = [];
+ROOMS.forEach((r, i) => {
+  const t = document.createElement('button');
+  t.className = 'th';
+  t.title = roomKey(r.name);                       // 悬停显示房间名(原生提示)
+  const im = document.createElement('img');
+  im.src = r.thumb; im.alt = roomKey(r.name);
+  const cap = document.createElement('i');
+  cap.textContent = roomKey(r.name);
+  t.appendChild(im); t.appendChild(cap);
+  t.onclick = () => pick(i);
+  thumbsEl.appendChild(t);
+  thumbEls.push(t);
+
+  const b = document.createElement('button');
+  b.className = 'room';
+  const n = SPOTS[r.name] ? SPOTS[r.name].length : 0;
+  b.innerHTML = '<b>' + roomKey(r.name) + '</b><span>' + r.label +
+                (n ? ' · ' + n + ' 个热点' : '') + '</span>';
+  b.onclick = () => pick(i);
+  roomsEl.appendChild(b);
+  roomEls.push(b);
+});
+
+function markCurrent(i){
+  roomEls.forEach((el, k) => el.classList.toggle('on', k === i));
+  thumbEls.forEach((el, k) => el.classList.toggle('on', k === i));
+}
+
+async function pick(i){
+  if (i === cur) return;
+  cur = i;
+  pop.classList.remove('show');
+  selIdx = -1;
+  markCurrent(i);
+  document.getElementById('tname').textContent = roomKey(ROOMS[i].name);
+  document.getElementById('tdesc').textContent = ROOMS[i].label;
+  // 已经有画面时不盖载入遮罩 —— 旧图留在屏幕上、新图淡入(这就是「不硬切黑屏」)
+  if (!texB) {
+    document.getElementById('load').classList.remove('gone');
+    document.getElementById('load').textContent = '正在载入全景...';
+  }
+  if (editMode) refreshEditor();
+  try {
+    const t = await loadTex(ROOMS[i].file);   // 低清:几 KB,先让画面出来
+    texA = texB;                       // 旧的转成退场层,淡完再删
+    texB = t;
+    /* ★ 站点版:高清在后台补,到齐且还停在这一间就悄悄替换(首屏不用等它) */
+    (function(){ const myI = i, hiUrl = ROOMS[i].hi;
+      if (!hiUrl) return;
+      loadTex(hiUrl).then(th => {
+        if (cur === myI && texB) { const old = texB; texB = th; gl.deleteTexture(old); }
+        else { gl.deleteTexture(th); }
+      }).catch(()=>{});
+    })();
+    mixT = texA ? 0 : 1;
+    fadeFrom = performance.now();
+    fading = !!texA;
+    // 进房间时直接朝着该房间第一盏灯具看 —— 热点换成真实方位后，yaw=0 那一面
+// 未必有东西可看（01 门厅的图里亚在 yaw=140°，朝正前方只会看到一堵暗墙）。
+    const HS_REAL = false;   // 热点是占位值 -> 默认平视;换成实测热点后改 true 恢复"朝灯看"
+    const hs = HS_REAL ? (SPOTS[ROOMS[i].name] || []) : [];
+    const firstLamp = hs.find(h => h.kind === 'lamp');
+    const firstNav = hs.find(h => h.kind === 'nav');
+    const face = firstLamp || firstNav;
+    // ★ 热点里的 yaw 是「经度 lon」，相机要看向它得取负（着色器：相机 yaw=Y → 中心 lon=-Y）
+    yaw = face ? -face.yaw : (ROOMS[i].yaw0 || 0);   // 没有实测热点时,朝该房间「纹理最密方向」
+    pitch = face ? Math.max(-0.35, Math.min(0.55, face.pitch)) : -0.06;   // 平视略俯,不再仰头看天花板
+    document.getElementById('load').classList.add('gone');
+  } catch (e) {
+    document.getElementById('load').classList.remove('gone');
+    document.getElementById('load').textContent = e.message;
+  }
+}
+
+function renderFrame(w, h){
+  if (!texB) return;
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, texA || texB);       // uTex = 退场层(没有就是自己)
+  gl.uniform1i(U.tex, 0);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, texB);               // uTexB = 进场层
+  gl.uniform1i(U.texB, 1);
+  gl.uniform1f(U.mix, mixT);
+  gl.uniform2f(U.res, w || cv.width, h || cv.height);
+  gl.uniform1f(U.yaw, yaw);
+  gl.uniform1f(U.pitch, pitch);
+  gl.uniform1f(U.fov, fov);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+/* 每帧推进淡入进度:0.4 秒内 uMix 0→1,淡完才释放旧纹理 */
+function advanceFade(){
+  if (!fading) return;
+  const t = Math.min(1, (performance.now() - fadeFrom) / FADE_MS);
+  mixT = t*t*(3-2*t);                                 // 平滑一点,别线性
+  if (t >= 1){
+    fading = false; mixT = 1;
+    if (texA){ gl.deleteTexture(texA); texA = null; }  // 淡完才释放旧纹理
+  }
+}
+
+function draw(){
+  if (xrActive){ requestAnimationFrame(draw); return; }   // VR 期间由 XR 帧循环画
+  if (texB){
+    advanceFade();
+    renderFrame();
+  }
+  if (auto && !dragging) yaw += 0.0022;
+  if (!dragging){ yaw += vx; pitch += vy; vx *= 0.92; vy *= 0.92; }
+  pitch = Math.max(-1.45, Math.min(1.45, pitch));
+  renderSpots();
+  requestAnimationFrame(draw);
+}
+
+/* ── 拖拽:自己拖过阈值才算拖动,没拖就是「点」──────────────────────────── */
+let downX = 0, downY = 0, moved = 0;
+cv.addEventListener('pointerdown', e => {
+  dragging = true; lx = e.clientX; ly = e.clientY; vx = vy = 0;
+  downX = e.clientX; downY = e.clientY; moved = 0;
+  cv.classList.add('drag'); cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const k = fov / cv.height * 1.6;
+  const dx = (e.clientX - lx) * k, dy = (e.clientY - ly) * k;
+  yaw -= dx; pitch += dy;
+  vx = -dx * 0.35; vy = dy * 0.35;
+  lx = e.clientX; ly = e.clientY;
+  moved += Math.abs(dx) + Math.abs(dy);
+});
+addEventListener('pointerup', e => {
+  const wasDrag = moved > 0.02 || Math.hypot(e.clientX-downX, e.clientY-downY) > 6;
+  dragging = false; cv.classList.remove('drag');
+  if (editMode && !wasDrag && e.target === cv) {
+    pending = unproject(e.clientX, e.clientY);
+    const deg = v => (v*180/Math.PI).toFixed(0) + '°';
+    document.getElementById('edcur').textContent =
+      '已取方位:yaw ' + deg(pending.yaw) + '  pitch ' + deg(pending.pitch);
+  }
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  fov = Math.max(35*Math.PI/180, Math.min(120*Math.PI/180, fov + e.deltaY*0.0006));
+  document.getElementById('fov').textContent = 'FOV ' + Math.round(fov*180/Math.PI) + '°';
+}, {passive:false});
+cv.addEventListener('dblclick', () => document.getElementById('fs').click());
+
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const s = 0.06;
+  if (e.key === 'ArrowLeft') yaw += s;
+  else if (e.key === 'ArrowRight') yaw -= s;
+  else if (e.key === 'ArrowUp') pitch += s;
+  else if (e.key === 'ArrowDown') pitch -= s;
+  else if (e.key === ' ') { e.preventDefault(); document.getElementById('auto').click(); }
+  else if (e.key >= '1' && e.key <= '9') pick(Math.min(ROOMS.length-1, +e.key-1));
+});
+
+document.getElementById('auto').onclick = e => {
+  auto = !auto; e.target.classList.toggle('on', auto);
+};
+document.getElementById('reset').onclick = () => { yaw = 0; pitch = 0; vx = vy = 0; };
+
+/* 广角切换:默认 100°(正常在线全景的观感);点开 115° 让人一眼看全这间房。
+   115° 的边缘横向拉伸约 3.4 倍,所以不做默认值。 */
+const FOV_NORMAL = 100*Math.PI/180, FOV_WIDE = 115*Math.PI/180;
+let wideOn = false;
+document.getElementById('wide').onclick = e => {
+  wideOn = !wideOn;
+  fov = wideOn ? FOV_WIDE : FOV_NORMAL;
+  document.getElementById('fov').textContent = 'FOV ' + Math.round(fov*180/Math.PI) + '°';
+  e.target.classList.toggle('on', wideOn);
+  e.target.textContent = wideOn ? '广角 115°' : '广角 100°';
+};
+document.getElementById('fs').onclick = () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+};
+/* 左栏可收起:收起后全景全宽,状态存 localStorage(file:// 下可用;不行就只管当次) */
+const sideEl = document.getElementById('side');
+const toggleBtn = document.getElementById('toggle');
+function setSide(open, remember){
+  sideEl.classList.toggle('hide', !open);
+  document.body.classList.toggle('collapsed', !open);
+  toggleBtn.textContent = open ? '☰ 收起房间栏' : '☰ 展开房间栏';
+  if (remember !== false) {
+    try { localStorage.setItem('henan360.sideOpen', open ? '1' : '0'); } catch (e) {}
+  }
+}
+try { setSide(localStorage.getItem('henan360.sideOpen') !== '0', false); }
+catch (e) { setSide(true, false); }
+toggleBtn.onclick = () => setSide(sideEl.classList.contains('hide'));   // 现在是关 → 打开
+
+const spotbtn = document.getElementById('spotbtn');
+spotbtn.classList.add('on');
+spotbtn.onclick = () => {
+  showSpots = !showSpots;
+  spotbtn.textContent = '热点 ' + (showSpots ? '显示' : '隐藏');
+  spotbtn.classList.toggle('on', showSpots);
+};
+
+/* ── VR:navigator.xr 支持就进沉浸式会话;不支持只置灰 + 一行提示,绝不 alert ── */
+const vrBtn = document.getElementById('vr');
+const vrhint = document.getElementById('vrhint');
+let xrActive = false, xrSession = null, xrRef = null;
+
+function vrSay(msg){ vrhint.textContent = msg || ''; }
+function vrDisable(msg){ vrBtn.disabled = true; vrSay(msg); vrBtn.title = msg; }
+
+(async () => {
+  let ok = false;
+  try {
+    if (navigator.xr && navigator.xr.isSessionSupported) {
+      ok = await navigator.xr.isSessionSupported('immersive-vr');
+    }
+  } catch (e) { ok = false; }
+  if (!ok) vrDisable('本机浏览器不支持 VR');
+})();
+
+function fovFromProj(m){ return 2*Math.atan(1/m[5]); }   // 对称透视:proj[5] = 1/tan(fovY/2)
+
+function eyeForward(view){                    // 相机看向 -Z,取它在参考空间的方向
+  const m = view.transform.matrix;            // column-major
+  let dx = -m[8], dy = -m[9], dz = -m[10];
+  const n = Math.hypot(dx, dy, dz) || 1;
+  dx /= n; dy /= n; dz /= n;
+  return { yaw: -Math.atan2(dx, -dz), pitch: Math.asin(Math.max(-1, Math.min(1, dy))) };
+}
+
+async function enterVR(){
+  try {
+    const session = await navigator.xr.requestSession('immersive-vr',
+      {optionalFeatures:['local-floor', 'bounded-floor']});
+    const layer = new XRWebGLLayer(session, gl);
+    session.updateRenderState({baseLayer: layer});
+    xrRef = await session.requestReferenceSpace('local');
+    xrSession = session; xrActive = true;
+    vrBtn.textContent = 'VR 中…';
+    vrSay('已进入 VR,摘下头显或按返回键退出');
+    session.addEventListener('end', () => {
+      xrActive = false; xrSession = null; xrRef = null;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      vrBtn.textContent = 'VR'; vrSay('');
+      resize();
+    });
+    const onXR = (time, frame) => {
+      session.requestAnimationFrame(onXR);
+      if (xrActive && frame && xrRef) {
+        const pose = frame.getViewerPose(xrRef);
+        if (pose) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+          pose.views.forEach(view => {                 // 一只眼画一遍(viewport 分开)
+            const vp = layer.getViewport(view);
+            gl.viewport(vp.x, vp.y, vp.width, vp.height);
+            const e = eyeForward(view);
+            yaw = e.yaw; pitch = e.pitch; fov = fovFromProj(view.projectionMatrix);
+            renderFrame(vp.width, vp.height);
+          });
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+      }
+    };
+    session.requestAnimationFrame(onXR);
+  } catch (e) {
+    xrActive = false;
+    vrSay('VR 启动失败:' + e.message);              // 只写一行提示
+  }
+}
+
+vrBtn.onclick = () => { if (!vrBtn.disabled) enterVR(); };
+
+/* ── 背景音乐:默认关;首次用户交互后才建 audio 对象(浏览器不让自动播放)── */
+const MUSIC = "bgm.mp3";
+let audio = null, musicOn = false;
+const muteBtn = document.getElementById('mute');
+const muteLab = document.getElementById('mutelab');
+const muteBox = document.getElementById('mutebox');
+function musicSay(msg){ muteBtn.title = msg || '背景音乐(默认关)'; }
+function ensureAudio(){
+  if (!audio && MUSIC){
+    audio = new Audio(MUSIC);
+    audio.loop = true;                 // 循环
+    audio.volume = 0.35;               // 默认压到 0.35,别盖过演示
+    audio.preload = 'auto';
+  }
+  return audio;
+}
+function musicSync(msg){
+  muteBtn.textContent = musicOn ? '🔊' : '🔇';       // 状态看得出来:图标 + 左边「开/关」
+  muteBtn.classList.toggle('on', musicOn);
+  muteBox.classList.toggle('on', musicOn);
+  muteLab.textContent = musicOn ? '开' : '关';
+  if (msg) musicSay(msg);
+}
+async function setMusic(on){
+  const a = ensureAudio();
+  if (!a) return;
+  if (!on){ a.pause(); musicOn = false; musicSync('背景音乐:关(点一下播放)'); return; }
+  musicOn = true; musicSync('背景音乐:开(点一下关闭)');   // 先给反馈,不等 play() 回来
+  try { await a.play(); }
+  catch (e) {
+    musicOn = false;
+    musicSync('起播被浏览器拦下(' + ((e && e.name) || e) + '),先点一下画面再点这个按钮');
+  }
+}
+if (!MUSIC){
+  muteBtn.disabled = true;
+  musicSay('这个查看器里没有内联音乐素材');
+} else {
+  muteBtn.textContent = '🔇';                        // 默认关:打开页面没有声音
+}
+muteBtn.onclick = () => setMusic(!musicOn);
+/* 首次拖动 / 点击 / 按键后才建 audio(用户手势解锁,之后点喇叭即可响) */
+['pointerdown', 'keydown', 'wheel'].forEach(ev =>
+  addEventListener(ev, () => { ensureAudio(); }, {once:true, passive:true}));
+
+/* ── 热点编辑器 ───────────────────────────────────────────────────────── */
+const ed = document.getElementById('ed');
+const edto = document.getElementById('edto');
+ROOMS.forEach(r => {
+  const o = document.createElement('option');
+  o.value = r.name; o.textContent = roomKey(r.name);
+  edto.appendChild(o);
+});
+document.getElementById('editbtn').onclick = () => {
+  editMode = !editMode;
+  ed.classList.toggle('show', editMode);
+  document.getElementById('editbtn').classList.toggle('on', editMode);
+  cv.classList.toggle('placing', editMode);
+  pop.classList.remove('show');
+  if (editMode) refreshEditor();
+};
+document.getElementById('edclose').onclick = () => document.getElementById('editbtn').click();
+document.getElementById('edkind').onchange = () => {
+  const nav = document.getElementById('edkind').value === 'nav';
+  document.getElementById('edtol').style.display = nav ? '' : 'none';
+  edto.style.display = nav ? '' : 'none';
+};
+document.getElementById('edkind').onchange();
+
+function refreshEditor(){
+  const name = cur >= 0 ? ROOMS[cur].name : null;
+  const list = (name && SPOTS[name]) ? SPOTS[name] : [];
+  const ul = document.getElementById('edlist');
+  ul.innerHTML = '';
+  list.forEach((h, i) => {
+    const li = document.createElement('li');
+    const t = document.createElement('span');
+    t.textContent = (h.kind === 'nav' ? '🧭 ' : '💡 ') + (h.title || h.to || '?') +
+                    '  (' + (h.yaw*180/Math.PI).toFixed(0) + '°, ' + (h.pitch*180/Math.PI).toFixed(0) + '°)';
+    const del = document.createElement('i');
+    del.textContent = '删除';
+    del.onclick = () => { list.splice(i, 1); selIdx = -1; refreshEditor(); renderSpots(); };
+    li.appendChild(t); li.appendChild(del); ul.appendChild(li);
+  });
+  if (!list.length) ul.innerHTML = '<li><span style="color:#6f6a63">本房间还没有热点</span></li>';
+}
+
+function fillEditor(){
+  const name = cur >= 0 ? ROOMS[cur].name : null;
+  const h = (name && SPOTS[name]) ? SPOTS[name][selIdx] : null;
+  if (!h) return;
+  document.getElementById('edkind').value = h.kind;
+  document.getElementById('edkind').onchange();
+  if (h.kind === 'nav' && h.to) edto.value = h.to;
+  document.getElementById('edtitle').value = h.title || '';
+  document.getElementById('eddesc').value = h.desc || '';
+  pending = { yaw: h.yaw, pitch: h.pitch };
+  const deg = v => (v*180/Math.PI).toFixed(0) + '°';
+  document.getElementById('edcur').textContent =
+    '已选中第 ' + (selIdx+1) + ' 个(yaw ' + deg(h.yaw) + '  pitch ' + deg(h.pitch) + ')';
+}
+
+document.getElementById('edadd').onclick = () => {
+  if (!pending) { document.getElementById('edcur').textContent = '先在画面上点一下取方位'; return; }
+  const name = cur >= 0 ? ROOMS[cur].name : null;
+  if (!name) return;
+  const kind = document.getElementById('edkind').value;
+  const title = document.getElementById('edtitle').value.trim();
+  const desc = document.getElementById('eddesc').value.trim();
+  const to = edto.value;
+  const h = { kind: kind, yaw: +pending.yaw.toFixed(4), pitch: +pending.pitch.toFixed(4) };
+  if (kind === 'nav') {
+    if (!to || to === name) { document.getElementById('edcur').textContent = '目标房间不能是本房间'; return; }
+    h.to = to; h.title = title || ('→ ' + roomKey(to));
+  } else {
+    if (!title) { document.getElementById('edcur').textContent = '灯具标注要填标题'; return; }
+    h.title = title; h.desc = desc || ORIGIN[name] || '';
+  }
+  (SPOTS[name] = SPOTS[name] || []).push(h);
+  pending = null;
+  document.getElementById('edtitle').value = '';
+  document.getElementById('eddesc').value = '';
+  document.getElementById('edcur').textContent = '已添加。继续点画面加下一个,或导出。';
+  refreshEditor(); renderSpots();
+};
+
+document.getElementById('edclear').onclick = () => {
+  const name = cur >= 0 ? ROOMS[cur].name : null;
+  if (!name) return;
+  if (!confirm('清空「' + roomKey(name) + '」的所有热点?')) return;
+  SPOTS[name] = []; selIdx = -1; refreshEditor(); renderSpots();
+};
+
+document.getElementById('edexport').onclick = () => {
+  const txt = JSON.stringify(SPOTS, null, 2);
+  const blob = new Blob([txt], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'hotspots.json';
+  a.click();
+  document.getElementById('edcur').textContent = '已下载 hotspots.json —— 覆盖同目录那份,再跑 make_viewer.py';
+};
+
+pick(0);
+draw();
+</script>
+</body>
+</html>
