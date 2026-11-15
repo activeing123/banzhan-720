@@ -168,13 +168,13 @@
 <div id="hud">
   <button id="auto">自动旋转</button>
   <button id="reset">回正</button>
-  <button id="wide">广角 70°</button>
+  <button id="wide">广角 100°</button>
   <button id="spotbtn">热点 显示</button>
   <button id="editbtn">✎ 摆热点</button>
   <button id="fs">全屏</button>
   <button id="vr" style="display:none">VR</button>
   <span id="vrhint" style="display:none"></span>
-  <span id="fov">FOV 70°</span>
+  <span id="fov">FOV 100°</span>
 </div>
 <div id="load">正在载入全景...</div>
 <div id="mutebox"><span id="mutelab">关</span><button id="mute" title="背景音乐(默认关)">🔇</button></div>
@@ -209,7 +209,7 @@
 </div>
 
 <script>
-const ROOMS = [{"file": "pano1/s01_lo.jpg", "hi": "pano1/s01.jpg", "thumb": "thumbs/s01.jpg", "label": "木饰面展示系统 / 通高窗岩板吧台 / 悬浮大屏墙 / 走廊对景 · 拖动环视", "name": "01_01_样板间展厅", "v1": "01_样板间展厅", "idx": 1, "yaw0": 0.0}];
+const ROOMS = [{"file": "pano1/s01_lo.jpg", "hi": "pano1/s01.jpg", "thumb": "thumbs/s01.jpg", "label": "木饰面展示系统 / 通高窗岩板吧台 / 悬浮大屏墙 / 走廊对景 · 拖动环视", "name": "01_01_样板间展厅", "v1": "01_样板间展厅", "idx": 1, "yaw0": 0.7854}];
 let SPOTS = {"01_01_样板间展厅": [{"kind": "lamp", "yaw": -1.22, "pitch": 0.42, "title": "灯槽", "desc": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"}, {"kind": "lamp", "yaw": 0.0, "pitch": 0.42, "title": "层板灯带", "desc": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"}, {"kind": "lamp", "yaw": 1.22, "pitch": 0.42, "title": "轨道射灯", "desc": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"}]};
 const ORIGIN = {"01_01_样板间展厅": "单开间 9.0×6.5m、层高 2.75m,周圈回光槽;长墙到顶木饰面展示系统(开放格与黑框玻璃柜交替、层板灯带),端头通高窗 + 白纱帘,窗前岩板瀑布边吧台配两椅;对面墙白悬浮板挂大屏 + 贴地悬浮矮柜 + 酒格高柜;第三面墙高柜 + 书桌;一端开口通走廊,尽头黑框玻璃隔断后是餐厅对景。花色:斜晖胡桃 + 婷兰灰。"};
 
@@ -276,7 +276,7 @@ const U = {
   fov: gl.getUniformLocation(prog,'uFov'),
 };
 
-let yaw = 0, pitch = 0, fov = 70*Math.PI/180;
+let yaw = 0, pitch = 0, fov = 100*Math.PI/180;
 let auto = false, cur = -1, dragging = false, lx = 0, ly = 0, vx = 0, vy = 0;
 let showSpots = false, editMode = false, pending = null, selIdx = -1;
 /* 交叉淡入:texA = 上一张(退场),texB = 当前(进场),mixT 0→1 用 0.4s */
@@ -565,14 +565,14 @@ document.getElementById('reset').onclick = () => { yaw = 0; pitch = 0; vx = vy =
 
 /* 广角切换:默认 100°(正常在线全景的观感);点开 115° 让人一眼看全这间房。
    115° 的边缘横向拉伸约 3.4 倍,所以不做默认值。 */
-const FOV_NORMAL = 70*Math.PI/180, FOV_WIDE = 115*Math.PI/180;
+const FOV_NORMAL = 100*Math.PI/180, FOV_WIDE = 115*Math.PI/180;
 let wideOn = false;
 document.getElementById('wide').onclick = e => {
   wideOn = !wideOn;
   fov = wideOn ? FOV_WIDE : FOV_NORMAL;
   document.getElementById('fov').textContent = 'FOV ' + Math.round(fov*180/Math.PI) + '°';
   e.target.classList.toggle('on', wideOn);
-  e.target.textContent = wideOn ? '广角 115°' : '广角 70°';
+  e.target.textContent = wideOn ? '广角 115°' : '广角 100°';
 };
 document.getElementById('fs').onclick = () => {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
